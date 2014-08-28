@@ -1,40 +1,33 @@
-# coding:utf8
+# -*-encoding:utf-8-*-
 #!/usr/bin/python
 
 from bs4 import BeautifulSoup
 import re
 import os
 import os.path
-import time
 import sys
-import thread
 import getopt
 import urllib2
-
+import logging
+from Queue import Queue
+from time import sleep
+from threading import Thread
 
 global HAVE_SAVED_AMOUNT
 global MAX_SAVED_AMOUNT
 global SAVE_PATH
 
+# q是任务队列
+# JOBS是有多少任务
+q = Queue()
+JOBS = 10
 
-def timer(no, interval):
-    cnt = 0
-    while cnt < 10:
-        print 'Thread:(%d) Time:%s\n' % (no, time.ctime())
-        time.sleep(interval)
-        cnt += 1
-    thread.exit_thread()
+# 伪装浏览器头
+HEADER = {'User-Agent': 'Mozilla/5.0 (Windows; U; Windows NT 6.1; en-US; rv:1.9.1.6) Gecko/20091201 Firefox/3.5.6'}
+# 日志配置，全局的, logging setting start ,just like sl4j
+logger = logging.getLogger()
 
-
-def test():  # Use thread.start_new_thread() to create 2 new threads
-    thread1 = timer(1, 1)
-    thread2 = timer(2, 2)
-    thread1.start()
-    thread2.start()
-    # thread.start_new_thread(thread1)
-    # thread.start_new_thread(thread2)
-
-
+# 帮助-h显示
 def usage():
     print("Usage:")
     print("-h for help")
@@ -43,10 +36,22 @@ def usage():
     print("-l , max number of crawing images , default is not limited")
 
 
+# 这个是工作进程，负责不断从队列取数据并处理
+def working():
+    while True:
+        url = q.get()
+        save_image(url)
+        sleep(1)
+        q.task_done()
+
+
+# 保存图片url到本地
 def save_image(url):
     global HAVE_SAVED_AMOUNT
     global MAX_SAVED_AMOUNT
     global SAVE_PATH
+
+    logger.info('[Save] start get image %s ' % url)
 
     if MAX_SAVED_AMOUNT < 0 or HAVE_SAVED_AMOUNT < MAX_SAVED_AMOUNT:
         content2 = urllib2.urlopen(url).read()
@@ -54,19 +59,36 @@ def save_image(url):
             code.write(content2)
         HAVE_SAVED_AMOUNT += 1
     else:
-        print('have saved %s images , this will exit' % HAVE_SAVED_AMOUNT)
+        logger.info('[Save] have saved %s images , this will exit' % HAVE_SAVED_AMOUNT)
         sys.exit()
+
+
+# 初始化logger
+def iniLogger():
+    fileHandler = logging.FileHandler('log.txt')  # 文件日志
+    consoleHandler = logging.StreamHandler()  # 控制台日志
+    consoleHandler.setLevel(logging.DEBUG)
+    formatter = logging.Formatter('[%(asctime)s] [%(levelname)-5s] %(message)s')
+    fileHandler.setFormatter(formatter)
+    consoleHandler.setFormatter(formatter)
+    logger.addHandler(fileHandler)
+    logger.addHandler(consoleHandler)
+    logger.setLevel(logging.NOTSET)
 
 
 if __name__ == '__main__':
     global HAVE_SAVED_AMOUNT
     global MAX_SAVED_AMOUNT
     global SAVE_PATH
+
+    iniLogger()
+    logger.debug('crawler program start')
+
     HAVE_SAVED_AMOUNT = 0
     MAX_SAVED_AMOUNT = -1
     opts, args = getopt.getopt(sys.argv[1:], "hl:n:o:")
-    SAVE_PATH = "pics"
-    concurrent = 10
+    SAVE_PATH = "pics"  # 保存路径，默认为当前目录下的pics
+    concurrent = 10  # concurrent是并发线程总数
     limit = -1
 
     for op, value in opts:
@@ -83,8 +105,23 @@ if __name__ == '__main__':
         elif op == "-h":
             usage()
             sys.exit()
-    page = urllib2.urlopen('http://www.22mm.cc/mm/qingliang/PiaeaJCJCCJaiHdmJ.html')
+
+    # fork NUM个线程等待队列
+    for i in range(concurrent):
+        t = Thread(target=working)
+        t.setName("thread %d " % i)
+        t.setDaemon(True)
+        t.start()
+
+    request = urllib2.Request('http://www.22mm.cc/mm/qingliang/PiaeaJCJCCJaiHdmJ.html', None, HEADER)
+    page = urllib2.urlopen(request)
     soup = BeautifulSoup(page)
+
+    page = soup.find("div", "ShowPage").find("strong");
+    pageNum = re.findall('/[\d]+', str(page), re.I)
+    pageNum = pageNum[0].replace("/", '')
+    logging.info('find page count is %s ' % pageNum)
+
     my_girl = soup.find_all('div', id='box-inner')
     image_url = ''
     for girl in my_girl:
@@ -92,7 +129,6 @@ if __name__ == '__main__':
         for img in imgs:
             contains = str(img).find('http')
             if contains >= 0:
-                print(img)
                 image_url = str(img)
             else:
                 continue
@@ -100,8 +136,11 @@ if __name__ == '__main__':
     for i in urls:
         image_url = i
 
-    image_url = image_url.replace('big', 'pic')
-    print(image_url)  # this image_url is end url
+    image_url = image_url.replace('big', 'pic')  # this image_url is end url
+
     if not os.path.exists(SAVE_PATH):
         os.makedirs(SAVE_PATH)
-    save_image(image_url)
+    logging.info('put url into queue, %s ' % image_url)
+    q.put(image_url)
+    # 等待所有JOBS完成
+    q.join()
