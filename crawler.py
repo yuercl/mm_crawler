@@ -18,9 +18,7 @@ global MAX_SAVED_AMOUNT
 global SAVE_PATH
 
 # q是任务队列
-# JOBS是有多少任务
-q = Queue()
-JOBS = 10
+queue = Queue()
 
 # 伪装浏览器头
 HEADER = {'User-Agent': 'Mozilla/5.0 (Windows; U; Windows NT 6.1; en-US; rv:1.9.1.6) Gecko/20091201 Firefox/3.5.6'}
@@ -39,10 +37,10 @@ def usage():
 # 这个是工作进程，负责不断从队列取数据并处理
 def working():
     while True:
-        url = q.get()
+        url = queue.get()
         save_image(url)
         sleep(1)
-        q.task_done()
+        queue.task_done()
 
 
 # 保存图片url到本地
@@ -54,7 +52,8 @@ def save_image(url):
     logger.info('[Save] start get image %s ' % url)
 
     if MAX_SAVED_AMOUNT < 0 or HAVE_SAVED_AMOUNT < MAX_SAVED_AMOUNT:
-        content2 = urllib2.urlopen(url).read()
+        request = urllib2.Request(url, None, HEADER)
+        content2 = urllib2.urlopen(request).read()
         with open(SAVE_PATH + '/' + url[-30:], 'wb') as code:
             code.write(content2)
         HAVE_SAVED_AMOUNT += 1
@@ -74,6 +73,39 @@ def iniLogger():
     logger.addHandler(fileHandler)
     logger.addHandler(consoleHandler)
     logger.setLevel(logging.NOTSET)
+
+
+# 解析出图片url，将图片url放入queue
+def parse_image_url():
+    request = urllib2.Request('http://www.22mm.cc/mm/qingliang/PiaeaJCJCCJaiHdmJ.html', None, HEADER)
+    page = urllib2.urlopen(request)
+    soup = BeautifulSoup(page)
+
+    page = soup.find("div", "ShowPage").find("strong");
+    pageNum = re.findall('/[\d]+', str(page), re.I)
+    pageNum = pageNum[0].replace("/", '')
+    logging.info('[Parse]find page count is %s ' % pageNum)
+
+    my_girl = soup.find_all('div', id='box-inner')
+    image_url = ''
+    for girl in my_girl:
+        imgs = girl.findAll("script")
+        for img in imgs:
+            contains = str(img).find('http')
+            if contains >= 0:
+                image_url = str(img)
+            else:
+                continue
+    urls = re.findall('http://[_a-zA-Z0-9./-]+', image_url, re.I)
+    for i in urls:
+        image_url = i
+
+    image_url = image_url.replace('big', 'pic')  # this image_url is end url
+
+    if not os.path.exists(SAVE_PATH):
+        os.makedirs(SAVE_PATH)
+    logging.info('[Parse] put url into queue, %s ' % image_url)
+    queue.put(image_url)
 
 
 if __name__ == '__main__':
@@ -113,34 +145,6 @@ if __name__ == '__main__':
         t.setDaemon(True)
         t.start()
 
-    request = urllib2.Request('http://www.22mm.cc/mm/qingliang/PiaeaJCJCCJaiHdmJ.html', None, HEADER)
-    page = urllib2.urlopen(request)
-    soup = BeautifulSoup(page)
-
-    page = soup.find("div", "ShowPage").find("strong");
-    pageNum = re.findall('/[\d]+', str(page), re.I)
-    pageNum = pageNum[0].replace("/", '')
-    logging.info('find page count is %s ' % pageNum)
-
-    my_girl = soup.find_all('div', id='box-inner')
-    image_url = ''
-    for girl in my_girl:
-        imgs = girl.findAll("script")
-        for img in imgs:
-            contains = str(img).find('http')
-            if contains >= 0:
-                image_url = str(img)
-            else:
-                continue
-    urls = re.findall('http://[_a-zA-Z0-9./-]+', image_url, re.I)
-    for i in urls:
-        image_url = i
-
-    image_url = image_url.replace('big', 'pic')  # this image_url is end url
-
-    if not os.path.exists(SAVE_PATH):
-        os.makedirs(SAVE_PATH)
-    logging.info('put url into queue, %s ' % image_url)
-    q.put(image_url)
+    parse_image_url()
     # 等待所有JOBS完成
-    q.join()
+    queue.join()
