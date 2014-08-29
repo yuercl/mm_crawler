@@ -46,6 +46,9 @@ class working(Thread):  # The timer class is derived from the class threading.Th
 
     def run(self):  # Overwrite run() method, put what you want the thread do here
         while not self.thread_stop:
+            if MAX_SAVED_AMOUNT > 0 and HAVE_SAVED_AMOUNT >= MAX_SAVED_AMOUNT:
+                logger.info('[Error] have saved %s images , this will exit' % HAVE_SAVED_AMOUNT)
+                self.stop()
             url = queue.get()
             if url != '':
                 save_image(url)
@@ -132,6 +135,9 @@ def get_all():
     for p in images_div:
         p2 = p.find_all('a')
         for item in p2:
+            if MAX_SAVED_AMOUNT > 0 and HAVE_SAVED_AMOUNT == MAX_SAVED_AMOUNT:
+                logger.info('program will exit because of max crawling limited')
+                sys.exit()
             next_url = 'http://www.22mm.cc' + item.get('href')
             logger.info(next_url + item.get('title'))
             parse_image_url(next_url)
